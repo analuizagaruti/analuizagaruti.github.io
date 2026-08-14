@@ -136,6 +136,17 @@
   .avg-box .val{font-family:var(--font-display);font-size:19px;font-weight:600;}
   .avg-good{color:var(--mint-tx);} .avg-warn{color:var(--peach-tx);} .avg-bad{color:var(--rose-tx);}
 
+  /* FALTAS / FREQUÊNCIA (folder cards no mesmo estilo de Matérias) */
+  .att-card{border-radius:0 16px 16px 16px;padding:18px 18px 16px;position:relative;margin-top:14px;border:1px solid var(--border);}
+  .att-tab{position:absolute;top:-14px;left:0;font-family:var(--font-display);font-weight:600;font-size:12.5px;padding:5px 16px;border-radius:10px 10px 0 0;}
+  .att-row{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;padding:6px 0;border-bottom:1px dashed var(--border);}
+  .att-row:last-child{border-bottom:none;}
+  .att-bar-track{width:100%;height:10px;border-radius:6px;background:var(--surface-soft);overflow:hidden;margin-top:6px;}
+  .att-bar-fill{height:100%;border-radius:6px;transition:width .3s;}
+  .att-box{display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);}
+  .att-box .val{font-family:var(--font-display);font-size:19px;font-weight:600;}
+  .att-good{color:var(--mint-tx);} .att-warn{color:var(--peach-tx);} .att-bad{color:var(--rose-tx);}
+
   /* IMPORTAR */
   .dropzone{border:2.5px dashed var(--border);border-radius:16px;padding:22px;text-align:center;background:var(--surface-soft);cursor:pointer;transition:border-color .15s,background .15s;}
   .dropzone:hover, .dropzone.drag{border-color:var(--lav-tx);background:var(--lav-bg);}
@@ -402,6 +413,7 @@ const DEFAULT_STATE = {
     {id:'s2', name:'Banco de Dados', professor:'', paletteIdx:1, grades:[]},
     {id:'s3', name:'Programação Orientada a Objetos', professor:'', paletteIdx:2, grades:[]},
   ],
+  attendance: [],
   notesList: [],
   timerLog: {},
   timerSettings: {focusMin:25, breakMin:5, longBreakMin:15, sessionsUntilLong:4},
@@ -428,6 +440,7 @@ async function loadState(){
       state.timerRuntime = Object.assign({}, DEFAULT_STATE.timerRuntime, parsed.timerRuntime||{});
       state.timerRuntime.running = false;
       state.aiSettings = Object.assign({}, DEFAULT_STATE.aiSettings, parsed.aiSettings||{});
+      state.attendance = parsed.attendance || [];
       state.subjects.forEach((s,i)=>{ if(s.paletteIdx===undefined) s.paletteIdx = i % PALETTE.length; });
     } else {
       state = JSON.parse(JSON.stringify(DEFAULT_STATE));
@@ -462,7 +475,7 @@ function render(){
         ${navBtn('cronograma','🗓️','Cronograma')}
         ${navBtn('timer','⏱️','Timer')}
         ${navBtn('materias','📚','Matérias')}
-        ${navBtn('importar','📥','Faltas')}
+        ${navBtn('faltas','📊','Faltas')}
         ${navBtn('resumos','📝','Resumos')}
         ${navBtn('personalizar','🎨','Personalizar')}
       </div>
@@ -487,7 +500,7 @@ function renderMain(){
   else if(currentTab==='cronograma') main.innerHTML = viewCronograma();
   else if(currentTab==='timer') main.innerHTML = viewTimer();
   else if(currentTab==='materias') main.innerHTML = viewMaterias();
-  else if(currentTab==='Faltas') main.innerHTML = viewImportar();
+  else if(currentTab==='faltas') main.innerHTML = viewFaltas();
   else if(currentTab==='resumos') main.innerHTML = viewResumos();
   else if(currentTab==='personalizar') main.innerHTML = viewPersonalizar();
   attachHandlers();
@@ -534,6 +547,81 @@ function subjectChips(activeIsAll){
       return `<button class="chip ${subjectFilter===s.name?'active':''}" data-filter-subject="${escapeHtml(s.name)}" style="background:${p.bg};color:${p.tx};">${escapeHtml(s.name)}</button>`;
     }).join('')}
   </div>`;
+}
+
+/* ---------- FALTAS / FREQUÊNCIA ---------- */
+function getAttendanceFor(subjectId){
+  let a = state.attendance.find(x=>x.subjectId===subjectId);
+  if(!a){
+    a = {subjectId, totalClasses:0, present:0, absences:0, maxAllowedAbsences:0};
+    state.attendance.push(a);
+  }
+  return a;
+}
+function attendancePct(a){
+  // percentual de faltas em relação ao total de aulas
+  if(!a.totalClasses) return 0;
+  return (a.absences / a.totalClasses) * 100;
+}
+function attendanceStatus(a){
+  if(!a.totalClasses || !a.maxAllowedAbsences) return '';
+  const usedPct = a.maxAllowedAbsences>0 ? (a.absences / a.maxAllowedAbsences) : 0;
+  if(usedPct >= 1) return 'att-bad';
+  if(usedPct >= 0.7) return 'att-warn';
+  return 'att-good';
+}
+
+function viewFaltas(){
+  return `
+    <div class="topbar"><h1>Controle de faltas</h1></div>
+    <p style="color:var(--muted);font-size:12.5px;margin:-8px 0 16px;">Registre presenças, faltas e o limite permitido em cada matéria para acompanhar sua frequência.</p>
+    <div class="grid grid-2">
+      ${state.subjects.map(s=>{
+        const p = PALETTE[s.paletteIdx % PALETTE.length];
+        const a = getAttendanceFor(s.id);
+        const pct = attendancePct(a);
+        const status = attendanceStatus(a);
+        const barColor = status==='att-bad'?'var(--rose-tx)':status==='att-warn'?'var(--peach-tx)':'var(--mint-tx)';
+        const remaining = a.maxAllowedAbsences ? Math.max(0, a.maxAllowedAbsences - a.absences) : null;
+        return `
+        <div class="att-card" style="background:${p.bg}33;">
+          <span class="att-tab" style="background:${p.bg};color:${p.tx};">${escapeHtml(s.name)}</span>
+          <div style="margin-top:6px;">&nbsp;</div>
+
+          <div class="att-row">
+            <span>Total de aulas na matéria</span>
+            <input type="number" min="0" step="1" value="${a.totalClasses}" data-att-field="totalClasses|${s.id}" style="width:80px;text-align:right;font-size:12.5px;">
+          </div>
+          <div class="att-row">
+            <span>Presenças registradas</span>
+            <input type="number" min="0" step="1" value="${a.present}" data-att-field="present|${s.id}" style="width:80px;text-align:right;font-size:12.5px;">
+          </div>
+          <div class="att-row">
+            <span>Faltas registradas</span>
+            <input type="number" min="0" step="1" value="${a.absences}" data-att-field="absences|${s.id}" style="width:80px;text-align:right;font-size:12.5px;">
+          </div>
+          <div class="att-row">
+            <span>Máximo de faltas permitido</span>
+            <input type="number" min="0" step="1" value="${a.maxAllowedAbsences}" data-att-field="maxAllowedAbsences|${s.id}" style="width:80px;text-align:right;font-size:12.5px;">
+          </div>
+
+          <div style="display:flex;gap:8px;margin-top:12px;">
+            <button class="btn small" style="background:var(--mint-tx);" data-att-mark="present|${s.id}">+ Presença</button>
+            <button class="btn small" style="background:var(--rose-tx);" data-att-mark="absence|${s.id}">+ Falta</button>
+          </div>
+
+          <div class="att-box">
+            <span style="font-size:11.5px;color:var(--muted);font-weight:700;">% de faltas</span>
+            <span class="val ${status}">${pct.toFixed(1)}%</span>
+          </div>
+          <div class="att-bar-track"><div class="att-bar-fill" style="width:${Math.min(100,pct)}%;background:${barColor};"></div></div>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px;font-weight:600;">
+            ${remaining===null?'Defina o máximo de faltas permitido para acompanhar o limite.':`Você ainda pode faltar <b style="color:var(--text);">${remaining}</b> aula${remaining!==1?'s':''}.`}
+          </div>
+        </div>`;
+      }).join('') || '<div class="card"><div class="empty">Cadastre matérias na aba Matérias para acompanhar a frequência.</div></div>'}
+    </div>
+  `;
 }
 
 /* ---------- PAINEL ---------- */
@@ -1038,7 +1126,11 @@ function attachHandlers(){
     saveState(); renderMain();
   };
   document.querySelectorAll('[data-del-subject]').forEach(el=>{
-    el.onclick = ()=>{ state.subjects = state.subjects.filter(x=>x.id!==el.dataset.delSubject); saveState(); renderMain(); };
+    el.onclick = ()=>{
+      state.subjects = state.subjects.filter(x=>x.id!==el.dataset.delSubject);
+      state.attendance = state.attendance.filter(a=>a.subjectId!==el.dataset.delSubject);
+      saveState(); renderMain();
+    };
   });
   document.querySelectorAll('[data-add-grade]').forEach(el=>{
     el.onclick = ()=>{
@@ -1057,6 +1149,27 @@ function attachHandlers(){
       const [sid, gid] = el.dataset.delGrade.split('|');
       const s = state.subjects.find(x=>x.id===sid);
       s.grades = s.grades.filter(g=>g.id!==gid);
+      saveState(); renderMain();
+    };
+  });
+
+  // FALTAS
+  document.querySelectorAll('[data-att-field]').forEach(el=>{
+    el.onchange = ()=>{
+      const [field, sid] = el.dataset.attField.split('|');
+      const a = getAttendanceFor(sid);
+      const v = parseInt(el.value);
+      a[field] = isNaN(v) ? 0 : Math.max(0, v);
+      saveState(); renderMain();
+    };
+  });
+  document.querySelectorAll('[data-att-mark]').forEach(el=>{
+    el.onclick = ()=>{
+      const [type, sid] = el.dataset.attMark.split('|');
+      const a = getAttendanceFor(sid);
+      if(type==='present'){ a.present += 1; }
+      else { a.absences += 1; }
+      a.totalClasses = Math.max(a.totalClasses, a.present + a.absences);
       saveState(); renderMain();
     };
   });
@@ -1083,42 +1196,6 @@ function attachHandlers(){
     saveState();
     const statusEl = document.getElementById('ai-settings-status');
     if(statusEl){ statusEl.textContent = 'Configuração de IA salva.'; statusEl.className = 'status-line ok'; }
-  };
-
-  // IMPORTAR AULA
-  const dropzone = document.getElementById('dropzone');
-  const fileInput = document.getElementById('import-file');
-  if(dropzone && fileInput){
-    dropzone.onclick = ()=> fileInput.click();
-    dropzone.ondragover = (e)=>{ e.preventDefault(); dropzone.classList.add('drag'); };
-    dropzone.ondragleave = ()=> dropzone.classList.remove('drag');
-    dropzone.ondrop = (e)=>{
-      e.preventDefault(); dropzone.classList.remove('drag');
-      if(e.dataTransfer.files.length){ importFile = e.dataTransfer.files[0]; document.getElementById('dropzone-text').textContent = importFile.name; }
-    };
-    fileInput.onchange = ()=>{
-      if(fileInput.files.length){ importFile = fileInput.files[0]; document.getElementById('dropzone-text').textContent = importFile.name; }
-    };
-  }
-  const startRecordBtn = document.getElementById('start-record-btn');
-  const stopRecordBtn = document.getElementById('stop-record-btn');
-  if(startRecordBtn) startRecordBtn.onclick = ()=> startRecording();
-  if(stopRecordBtn) stopRecordBtn.onclick = ()=> stopRecording('Gravação parada. Revise o texto e gere o resumo.', false);
-  const manualTranscriptField = document.getElementById('import-manual-transcript');
-  if(manualTranscriptField) manualTranscriptField.oninput = ()=>{ recordedTranscript = manualTranscriptField.value; };
-  const generateBtn = document.getElementById('generate-summary-btn');
-  if(generateBtn) generateBtn.onclick = generateSummary;
-  const savePreviewBtn = document.getElementById('save-preview-btn');
-  if(savePreviewBtn) savePreviewBtn.onclick = ()=>{
-    const title = document.getElementById('preview-title').value.trim();
-    const content = document.getElementById('preview-content').value.trim();
-    const subject = document.getElementById('import-subject').value.trim();
-    if(!title || !content) return;
-    state.notesList.push({id:uid(), subject, title, content: textToHtml(content), font:'nunito', source:'ia', date:todayKey()});
-    saveState();
-    importFile = null; recordedTranscript = '';
-    currentTab = 'resumos'; subjectFilter = null;
-    render();
   };
 
   // Toolbar do editor de resumos (negrito, itálico, sublinhado, listas, cores)
