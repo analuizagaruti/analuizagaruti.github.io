@@ -33,12 +33,7 @@
   body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-body);}
   #app{display:flex;min-height:600px;max-width:1220px;margin:0 auto;position:relative;}
 
-  /* decorative pastel blobs */
-  body::before, body::after{
-    content:'';position:fixed;border-radius:50%;filter:blur(2px);z-index:-1;opacity:.5;
-  }
-  body::before{width:280px;height:280px;background:var(--lav-bg);top:-120px;right:-80px;}
-  body::after{width:220px;height:220px;background:var(--mint-bg);bottom:-90px;left:-60px;}
+
 
   /* SIDEBAR */
   .sidebar{width:206px;flex-shrink:0;background:var(--surface);border-right:2px dashed var(--border);padding:22px 14px;display:flex;flex-direction:column;gap:4px;}
@@ -460,14 +455,14 @@ function render(){
   const app = document.getElementById('app');
   app.innerHTML = `
     <div class="sidebar">
-      <div class="brand">📔 Painel de Estudos<small>ADS · 3º período</small></div>
+      <div class="brand">📔 Painel de Estudos</div>
       <div class="nav">
         ${navBtn('painel','🏠','Painel')}
         ${navBtn('tarefas','✅','Tarefas')}
         ${navBtn('cronograma','🗓️','Cronograma')}
         ${navBtn('timer','⏱️','Timer')}
         ${navBtn('materias','📚','Matérias')}
-        ${navBtn('importar','📥','Importar aula')}
+        ${navBtn('importar','📥','Faltas')}
         ${navBtn('resumos','📝','Resumos')}
         ${navBtn('personalizar','🎨','Personalizar')}
       </div>
@@ -492,7 +487,7 @@ function renderMain(){
   else if(currentTab==='cronograma') main.innerHTML = viewCronograma();
   else if(currentTab==='timer') main.innerHTML = viewTimer();
   else if(currentTab==='materias') main.innerHTML = viewMaterias();
-  else if(currentTab==='importar') main.innerHTML = viewImportar();
+  else if(currentTab==='Faltas') main.innerHTML = viewImportar();
   else if(currentTab==='resumos') main.innerHTML = viewResumos();
   else if(currentTab==='personalizar') main.innerHTML = viewPersonalizar();
   attachHandlers();
@@ -835,335 +830,6 @@ function viewPersonalizar(){
       </div>
     </div>
   `;
-}
-
-/* ---------- IMPORTAR AULA ---------- */
-let importFile = null;
-let recognitionObj = null;
-let recordedTranscript = '';
-let isRecording = false;
-
-function aiProviderFieldsHtml(ai){
-  if(ai.provider==='openai'){
-    return `
-      <div class="field"><label>Chave de API da OpenAI</label><input type="password" id="ai-openai-key" placeholder="sk-..." value="${ai.openaiKey?escapeHtml(ai.openaiKey):''}"></div>
-      <div class="field"><label>Modelo</label><input id="ai-openai-model" value="${escapeHtml(ai.openaiModel||'gpt-4o-mini')}"></div>
-      <p style="font-size:11px;color:var(--muted);">PDFs não são suportados com este provedor — use texto, imagem ou Word.</p>`;
-  }
-  if(ai.provider==='custom'){
-    return `
-      <div class="field"><label>URL do endpoint (compatível com API da OpenAI)</label><input id="ai-custom-url" placeholder="https://api.exemplo.com/v1/chat/completions" value="${ai.customUrl?escapeHtml(ai.customUrl):''}"></div>
-      <div class="field"><label>Chave de API</label><input type="password" id="ai-custom-key" placeholder="chave..." value="${ai.customKey?escapeHtml(ai.customKey):''}"></div>
-      <div class="field"><label>Nome do modelo</label><input id="ai-custom-model" placeholder="ex: llama-3.1-70b" value="${escapeHtml(ai.customModel||'')}"></div>
-      <p style="font-size:11px;color:var(--muted);">Serve para qualquer serviço com API compatível com a da OpenAI (Groq, DeepSeek, Ollama, etc). PDFs não são suportados aqui — use texto, imagem ou Word.</p>`;
-  }
-  return `
-      <div class="field"><label>Chave de API da Anthropic (opcional aqui no Claude.ai; obrigatória se usar fora dele)</label><input type="password" id="ai-anthropic-key" placeholder="sk-ant-..." value="${ai.anthropicKey?escapeHtml(ai.anthropicKey):''}"></div>
-      <p style="font-size:11px;color:var(--muted);">Suporta texto, PDF, imagem e Word.</p>`;
-}
-
-function viewImportar(){
-  const subjectOptions = state.subjects.map(s=>`<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)}</option>`).join('');
-  const ai = state.aiSettings;
-  return `
-    <div class="topbar"><h1>Importar aula</h1></div>
-    <div class="card" style="background:var(--sky-bg)33;margin-bottom:14px;">
-      <h2 class="section-title" style="font-size:13px;">🤖 Provedor de IA para os resumos</h2>
-      <div class="field">
-        <label>Escolher provedor</label>
-        <select id="ai-provider-select">
-          <option value="anthropic" ${ai.provider==='anthropic'?'selected':''}>Claude (Anthropic)</option>
-          <option value="openai" ${ai.provider==='openai'?'selected':''}>ChatGPT (OpenAI)</option>
-          <option value="custom" ${ai.provider==='custom'?'selected':''}>Outro (compatível com API da OpenAI)</option>
-        </select>
-      </div>
-      ${aiProviderFieldsHtml(ai)}
-      <button class="btn ghost small" id="save-ai-settings-btn">Salvar configuração de IA</button>
-      <div class="status-line" id="ai-settings-status"></div>
-    </div>
-    <div class="card">
-      <h2 class="section-title">📥 Envie seu material</h2>
-      <p style="color:var(--muted);font-size:12.5px;line-height:1.6;">Envie anotações de texto, PDFs, fotos de slides ou documentos do Word — a IA lê o conteúdo e monta um resumo organizado por tópicos. Para áudio e vídeo, veja as opções logo abaixo.</p>
-      <div class="field"><label>Matéria do resumo</label><input id="import-subject" list="subjects-datalist" placeholder="Digite a matéria">${subjectOptions?`<datalist id="subjects-datalist">${subjectOptions}</datalist>`:''}</div>
-
-      <label>Arquivo (.txt, .md, .pdf, .docx, .jpg, .png)</label>
-      <div class="dropzone" id="dropzone">
-        <div class="dz-icon">📄</div>
-        <div class="dz-text" id="dropzone-text">Clique para escolher um arquivo</div>
-        <div class="dz-sub">ou arraste e solte aqui</div>
-      </div>
-      <input type="file" id="import-file" accept=".txt,.md,.pdf,.docx,.jpg,.jpeg,.png,.webp">
-
-      <div class="card" style="background:#FBF0C044;margin:16px 0;">
-        <h2 class="section-title" style="font-size:13px;">🎙️ Aula em áudio ou vídeo</h2>
-        <p style="font-size:12px;color:var(--muted);line-height:1.6;">A IA ainda não consegue transcrever arquivos de áudio/vídeo enviados diretamente. Duas alternativas:</p>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0;">
-          <button class="btn ghost" id="start-record-btn" style="${isRecording?'display:none;':''}">🔴 Gravar aula ao vivo e transcrever</button>
-          <button class="btn ghost" id="stop-record-btn" style="${isRecording?'':'display:none;'}"><span class="rec-dot"></span>Parar gravação</button>
-        </div>
-        <p style="font-size:11px;color:var(--muted);margin:-4px 0 10px;">A gravação usa o microfone do navegador e pode não funcionar dentro de ambientes incorporados. Se aparecer erro, use o campo de colar transcrição abaixo.</p>
-        <div class="field"><label>Ou cole aqui uma transcrição que você já tenha</label><textarea id="import-manual-transcript" placeholder="Cole a transcrição do áudio/vídeo aqui...">${escapeHtml(recordedTranscript)}</textarea></div>
-      </div>
-
-      <button class="btn" id="generate-summary-btn">✨ Gerar resumo com IA</button>
-      <div class="status-line" id="import-status"></div>
-    </div>
-
-    <div class="card" id="import-preview-card" style="display:none;margin-top:16px;">
-      <h2 class="section-title">📝 Revise antes de salvar</h2>
-      <div class="field"><label>Título</label><input id="preview-title"></div>
-      <div class="field"><label>Conteúdo do resumo</label><textarea id="preview-content" style="min-height:220px;"></textarea></div>
-      <button class="btn" id="save-preview-btn">Salvar como resumo</button>
-    </div>
-  `;
-}
-
-function fileToBase64(file){
-  return new Promise((resolve, reject)=>{
-    const r = new FileReader();
-    r.onload = ()=>resolve(r.result.split(',')[1]);
-    r.onerror = ()=>reject(new Error('Falha ao ler arquivo'));
-    r.readAsDataURL(file);
-  });
-}
-function fileToText(file){
-  return new Promise((resolve, reject)=>{
-    const r = new FileReader();
-    r.onload = ()=>resolve(r.result);
-    r.onerror = ()=>reject(new Error('Falha ao ler arquivo'));
-    r.readAsText(file);
-  });
-}
-
-function parseAIJsonResponse(text){
-  const clean = text.replace(/```json|```/g,'').trim();
-  try{
-    const parsed = JSON.parse(clean);
-    if(parsed.titulo && parsed.resumo) return parsed;
-  }catch(e){ /* fallback abaixo */ }
-  return {titulo:'Resumo da aula', resumo: text || 'Não foi possível gerar o resumo. Tente novamente.'};
-}
-
-async function callAnthropic(content){
-  const ai = state.aiSettings;
-  const headers = {'Content-Type':'application/json'};
-  if(ai.anthropicKey){
-    headers['x-api-key'] = ai.anthropicKey;
-    headers['anthropic-version'] = '2023-06-01';
-    headers['anthropic-dangerous-direct-browser-access'] = 'true';
-  }
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method:'POST',
-    headers,
-    body: JSON.stringify({
-      model:'claude-sonnet-4-6',
-      max_tokens: 1000,
-      messages:[{ role:'user', content }]
-    })
-  });
-  const data = await response.json();
-  if(!response.ok){
-    const apiMsg = (data && data.error && data.error.message) ? data.error.message : `erro ${response.status}`;
-    throw new Error(apiMsg);
-  }
-  const text = (data.content||[]).map(b=>b.text||'').join('\n');
-  return parseAIJsonResponse(text);
-}
-
-function anthropicContentToOpenAI(content){
-  const parts = [];
-  for(const block of content){
-    if(block.type === 'text') parts.push({type:'text', text: block.text});
-    else if(block.type === 'image') parts.push({type:'image_url', image_url:{ url: `data:${block.source.media_type};base64,${block.source.data}` }});
-    else if(block.type === 'document') throw new Error('PDFs só são suportados com o provedor Claude (Anthropic). Troque o provedor no painel acima ou envie o material em outro formato.');
-  }
-  return parts;
-}
-
-async function callOpenAICompatible(content, cfg){
-  if(cfg.urlRequired && !cfg.url) throw new Error(cfg.keyRequiredMsg);
-  if(!cfg.key) throw new Error(cfg.keyRequiredMsg);
-  const parts = anthropicContentToOpenAI(content);
-  const response = await fetch(cfg.url, {
-    method:'POST',
-    headers:{'Content-Type':'application/json','Authorization':`Bearer ${cfg.key}`},
-    body: JSON.stringify({ model: cfg.model, max_tokens: 1000, messages:[{ role:'user', content: parts }] })
-  });
-  const data = await response.json();
-  if(!response.ok){
-    const apiMsg = (data && data.error && data.error.message) ? data.error.message : `erro ${response.status}`;
-    throw new Error(apiMsg);
-  }
-  const text = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
-  return parseAIJsonResponse(text);
-}
-
-async function callAIForSummary(content){
-  const ai = state.aiSettings;
-  if(ai.provider === 'openai'){
-    return callOpenAICompatible(content, {
-      url: 'https://api.openai.com/v1/chat/completions',
-      key: ai.openaiKey,
-      model: ai.openaiModel || 'gpt-4o-mini',
-      keyRequiredMsg: 'Nenhuma chave de API da OpenAI configurada. Cole sua chave no painel "Provedor de IA" acima (crie uma em platform.openai.com).'
-    });
-  }
-  if(ai.provider === 'custom'){
-    return callOpenAICompatible(content, {
-      url: ai.customUrl,
-      key: ai.customKey,
-      model: ai.customModel,
-      urlRequired: true,
-      keyRequiredMsg: 'Preencha a URL, a chave e o modelo do seu provedor personalizado no painel "Provedor de IA" acima.'
-    });
-  }
-  return callAnthropic(content);
-}
-
-const SUMMARY_INSTRUCTION = 'Gere um título curto (máx. 8 palavras) e um resumo de aula bem organizado em tópicos, em português, cobrindo os conceitos principais do conteúdo acima. Responda SOMENTE em JSON, sem markdown ao redor, no formato exato: {"titulo":"...", "resumo":"..."}';
-
-const SPEECH_ERROR_MESSAGES = {
-  'not-allowed': 'Permissão de microfone negada ou bloqueada. Se você está dentro do Claude.ai, o navegador pode não permitir acesso ao microfone neste contexto — cole a transcrição manualmente abaixo.',
-  'service-not-allowed': 'O serviço de reconhecimento de voz foi bloqueado neste ambiente. Use o campo de colar transcrição abaixo.',
-  'audio-capture': 'Nenhum microfone foi encontrado neste dispositivo.',
-  'network': 'Erro de rede durante a transcrição. Verifique sua conexão e tente novamente.',
-  'aborted': null, // user or code stopped it on purpose, not a real error
-  'no-speech': null // just silence, keep listening
-};
-
-function setImportStatus(msg, cls){
-  const statusEl = document.getElementById('import-status');
-  if(!statusEl) return;
-  statusEl.textContent = msg;
-  statusEl.className = 'status-line'+(cls?(' '+cls):'');
-}
-
-function startRecording(){
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SR){
-    setImportStatus('Seu navegador não tem suporte para gravação e transcrição ao vivo. Use a opção de colar transcrição.', 'err');
-    return;
-  }
-  if(location.protocol !== 'https:' && location.hostname !== 'localhost'){
-    setImportStatus('A gravação só funciona em uma conexão segura (https). Use a opção de colar transcrição.', 'err');
-    return;
-  }
-  const manualField = document.getElementById('import-manual-transcript');
-  recordedTranscript = (manualField && manualField.value) || '';
-
-  try{
-    recognitionObj = new SR();
-    recognitionObj.lang = 'pt-BR';
-    recognitionObj.continuous = true;
-    recognitionObj.interimResults = true;
-
-    recognitionObj.onresult = (event)=>{
-      let finalText = '';
-      for(let i=event.resultIndex;i<event.results.length;i++){
-        if(event.results[i].isFinal) finalText += event.results[i][0].transcript + ' ';
-      }
-      if(finalText){
-        recordedTranscript += finalText;
-        const ta = document.getElementById('import-manual-transcript');
-        if(ta) ta.value = recordedTranscript;
-      }
-    };
-
-    recognitionObj.onerror = (event)=>{
-      const message = SPEECH_ERROR_MESSAGES.hasOwnProperty(event.error) ? SPEECH_ERROR_MESSAGES[event.error] : `Erro na gravação (${event.error}). Tente novamente ou cole a transcrição manualmente.`;
-      if(message){
-        stopRecording(message, true);
-      }
-      // null message (e.g. 'no-speech') is not fatal: keep listening, say nothing new
-    };
-
-    recognitionObj.onend = ()=>{
-      // Some browsers auto-stop after a pause even with continuous=true.
-      // If the user hasn't pressed "stop" and we didn't hit a fatal error, restart automatically.
-      if(isRecording){
-        try{ recognitionObj.start(); }
-        catch(e){ stopRecording('A gravação foi interrompida pelo navegador. Cole a transcrição manualmente se precisar.', true); }
-      }
-    };
-
-    recognitionObj.start();
-    isRecording = true;
-    const startBtn = document.getElementById('start-record-btn');
-    const stopBtn = document.getElementById('stop-record-btn');
-    if(startBtn) startBtn.style.display = 'none';
-    if(stopBtn) stopBtn.style.display = 'inline-block';
-    setImportStatus('Gravando... fale perto do microfone.', '');
-  }catch(e){
-    console.error(e);
-    setImportStatus('Não foi possível iniciar a gravação neste navegador. Use a opção de colar transcrição.', 'err');
-    isRecording = false;
-  }
-}
-
-function stopRecording(message, isError){
-  isRecording = false;
-  if(recognitionObj){
-    try{ recognitionObj.stop(); }catch(e){ /* already stopped */ }
-  }
-  const startBtn = document.getElementById('start-record-btn');
-  const stopBtn = document.getElementById('stop-record-btn');
-  if(stopBtn) stopBtn.style.display = 'none';
-  if(startBtn) startBtn.style.display = 'inline-block';
-  setImportStatus(message, isError?'err':'');
-}
-
-async function generateSummary(){
-  const setStatus = setImportStatus;
-  const genBtn = document.getElementById('generate-summary-btn');
-  const manualTranscript = document.getElementById('import-manual-transcript').value.trim();
-
-  if(genBtn){ genBtn.disabled = true; genBtn.style.opacity = '.6'; genBtn.style.cursor = 'wait'; }
-  try{
-    let content;
-    if(importFile){
-      const name = importFile.name.toLowerCase();
-      setStatus('Lendo arquivo...');
-      if(name.endsWith('.pdf')){
-        const base64 = await fileToBase64(importFile);
-        content = [
-          {type:'document', source:{type:'base64', media_type:'application/pdf', data:base64}},
-          {type:'text', text: 'Este é um material de aula em PDF (slides ou apostila). '+SUMMARY_INSTRUCTION}
-        ];
-      } else if(name.match(/\.(jpg|jpeg|png|webp)$/)){
-        const base64 = await fileToBase64(importFile);
-        content = [
-          {type:'image', source:{type:'base64', media_type:importFile.type||'image/jpeg', data:base64}},
-          {type:'text', text: 'Esta imagem é um slide ou anotação de aula. '+SUMMARY_INSTRUCTION}
-        ];
-      } else if(name.endsWith('.docx')){
-        if(typeof mammoth === 'undefined') throw new Error('Biblioteca de leitura de .docx não carregou. Tente novamente.');
-        const buffer = await importFile.arrayBuffer();
-        const result = await mammoth.extractRawText({arrayBuffer:buffer});
-        content = [{type:'text', text: 'Conteúdo de um documento de aula:\n\n'+result.value+'\n\n'+SUMMARY_INSTRUCTION}];
-      } else {
-        const text = await fileToText(importFile);
-        content = [{type:'text', text: 'Conteúdo de uma anotação de aula:\n\n'+text+'\n\n'+SUMMARY_INSTRUCTION}];
-      }
-    } else if(manualTranscript){
-      content = [{type:'text', text: 'Transcrição de uma aula em áudio/vídeo:\n\n'+manualTranscript+'\n\n'+SUMMARY_INSTRUCTION}];
-    } else {
-      setStatus('Envie um arquivo, grave uma aula ou cole uma transcrição primeiro.', 'err');
-      return;
-    }
-
-    setStatus('Gerando resumo com IA...');
-    const {titulo, resumo} = await callAIForSummary(content);
-
-    document.getElementById('preview-title').value = titulo;
-    document.getElementById('preview-content').value = resumo;
-    document.getElementById('import-preview-card').style.display = 'block';
-    setStatus('Pronto! Revise o resumo abaixo antes de salvar.', 'ok');
-  }catch(e){
-    console.error(e);
-    setStatus('Não foi possível gerar o resumo: '+(e.message||'erro desconhecido')+'. Tente novamente.', 'err');
-  }finally{
-    if(genBtn){ genBtn.disabled = false; genBtn.style.opacity = ''; genBtn.style.cursor = ''; }
-  }
 }
 
 /* ---------- RESUMOS (fontes diferentes por resumo) ---------- */
