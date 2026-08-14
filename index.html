@@ -339,7 +339,11 @@ function buildFirestoreStorage(uid){
   };
 }
 
+let pendingProfile = null; // captura faculdade/curso/período no cadastro, aplicado após loadState()
+let authGateMode = 'signup'; // 'signup' mostra os campos de perfil acadêmico; 'login' esconde
+
 function renderAuthGate(statusMsg, statusCls){
+  const isSignup = authGateMode === 'signup';
   document.getElementById('app').innerHTML = `
     <div style="max-width:400px;margin:70px auto;padding:0 20px;width:100%;">
       <div class="card">
@@ -347,6 +351,13 @@ function renderAuthGate(statusMsg, statusCls){
         <p style="color:var(--muted);font-size:12.5px;margin:0 0 20px;">Entre para sincronizar suas tarefas, matérias e resumos entre todos os seus dispositivos.</p>
         <div class="field"><label>E-mail</label><input id="auth-email" type="email" placeholder="voce@exemplo.com"></div>
         <div class="field"><label>Senha</label><input id="auth-password" type="password" placeholder="Mínimo 6 caracteres"></div>
+        ${isSignup?`
+        <div style="border-top:1px dashed var(--border);margin:14px 0 12px;padding-top:12px;">
+          <label style="margin-bottom:8px;">Perfil acadêmico <span style="font-weight:600;color:var(--muted);">(opcional)</span></label>
+          <div class="field"><input id="auth-faculdade" placeholder="Faculdade / Instituição"></div>
+          <div class="field"><input id="auth-curso" placeholder="Curso"></div>
+          <div class="field" style="margin-bottom:0;"><input id="auth-periodo" placeholder="Período (ex: 3º período)"></div>
+        </div>`:''}
         <div style="display:flex;gap:10px;margin-top:6px;">
           <button class="btn" id="auth-login-btn" style="flex:1;">Entrar</button>
           <button class="btn ghost" id="auth-signup-btn" style="flex:1;">Criar conta</button>
@@ -364,16 +375,27 @@ function renderAuthGate(statusMsg, statusCls){
     const password = document.getElementById('auth-password').value;
     if(!email || !password){ renderAuthGate('Preencha e-mail e senha.', 'err'); return; }
     try{
-      if(action==='signup') await fb.authMod.createUserWithEmailAndPassword(fb.auth, email, password);
+      if(action==='signup'){
+        const faculdadeEl = document.getElementById('auth-faculdade');
+        const cursoEl = document.getElementById('auth-curso');
+        const periodoEl = document.getElementById('auth-periodo');
+        pendingProfile = {
+          faculdade: faculdadeEl ? faculdadeEl.value.trim() : '',
+          curso: cursoEl ? cursoEl.value.trim() : '',
+          periodo: periodoEl ? periodoEl.value.trim() : ''
+        };
+        await fb.authMod.createUserWithEmailAndPassword(fb.auth, email, password);
+      }
       else await fb.authMod.signInWithEmailAndPassword(fb.auth, email, password);
       // onAuthStateChanged cuida do resto
     }catch(e){
+      pendingProfile = null;
       const msg = AUTH_ERROR_MESSAGES[e.code] || ('Não foi possível continuar: ' + (e.message||'erro desconhecido'));
       renderAuthGate(msg, 'err');
     }
   };
-  loginBtn.onclick = ()=> doAuth('login');
-  signupBtn.onclick = ()=> doAuth('signup');
+  loginBtn.onclick = ()=>{ authGateMode = 'login'; doAuth('login'); };
+  signupBtn.onclick = ()=>{ authGateMode = 'signup'; doAuth('signup'); };
   skipBtn.onclick = ()=> { loadState(); };
 }
 
@@ -414,6 +436,7 @@ const DEFAULT_STATE = {
     {id:'s3', name:'Programação Orientada a Objetos', professor:'', paletteIdx:2, grades:[]},
   ],
   attendance: [],
+  profile: {faculdade:'', curso:'', periodo:''},
   notesList: [],
   timerLog: {},
   timerSettings: {focusMin:25, breakMin:5, longBreakMin:15, sessionsUntilLong:4},
@@ -441,12 +464,18 @@ async function loadState(){
       state.timerRuntime.running = false;
       state.aiSettings = Object.assign({}, DEFAULT_STATE.aiSettings, parsed.aiSettings||{});
       state.attendance = parsed.attendance || [];
+      state.profile = Object.assign({}, DEFAULT_STATE.profile, parsed.profile||{});
       state.subjects.forEach((s,i)=>{ if(s.paletteIdx===undefined) s.paletteIdx = i % PALETTE.length; });
     } else {
       state = JSON.parse(JSON.stringify(DEFAULT_STATE));
     }
   }catch(e){
     state = JSON.parse(JSON.stringify(DEFAULT_STATE));
+  }
+  if(pendingProfile){
+    state.profile = Object.assign({}, state.profile, pendingProfile);
+    pendingProfile = null;
+    saveState();
   }
   if(state.customColorsBase){
     PALETTE = buildPalette(state.customColorsBase);
@@ -468,7 +497,7 @@ function render(){
   const app = document.getElementById('app');
   app.innerHTML = `
     <div class="sidebar">
-      <div class="brand">📔 Painel de Estudos</div>
+      <div class="brand">📔 Painel de Estudos${(state.profile&&(state.profile.curso||state.profile.faculdade))?`<small>${escapeHtml(state.profile.curso||state.profile.faculdade)}${state.profile.periodo?' · '+escapeHtml(state.profile.periodo):''}</small>`:''}</div>
       <div class="nav">
         ${navBtn('painel','🏠','Painel')}
         ${navBtn('tarefas','✅','Tarefas')}
@@ -895,8 +924,19 @@ function viewMaterias(){
 function viewPersonalizar(){
   const base = state.customColorsBase || DEFAULT_PALETTE_BASE;
   const bg = state.customBg || DEFAULT_BG;
+  const prof = state.profile || {faculdade:'',curso:'',periodo:''};
   return `
-    <div class="topbar"><h1>Personalizar cores</h1></div>
+    <div class="topbar"><h1>Personalizar</h1></div>
+    <div class="card" style="margin-bottom:16px;">
+      <h2 class="section-title">🎓 Perfil acadêmico</h2>
+      <p style="color:var(--muted);font-size:12.5px;margin-bottom:14px;">Essas informações aparecem no topo do menu lateral.</p>
+      <div class="grid grid-3">
+        <div class="field" style="margin-bottom:0;"><label>Faculdade / Instituição</label><input id="profile-faculdade" placeholder="Ex: UNICAMP" value="${escapeHtml(prof.faculdade)}"></div>
+        <div class="field" style="margin-bottom:0;"><label>Curso</label><input id="profile-curso" placeholder="Ex: Análise e Desenvolvimento de Sistemas" value="${escapeHtml(prof.curso)}"></div>
+        <div class="field" style="margin-bottom:0;"><label>Período</label><input id="profile-periodo" placeholder="Ex: 3º período" value="${escapeHtml(prof.periodo)}"></div>
+      </div>
+      <button class="btn" id="save-profile-btn" style="margin-top:14px;">Salvar perfil</button>
+    </div>
     <div class="card" style="margin-bottom:16px;">
       <h2 class="section-title">🎨 Cor de fundo do app</h2>
       <p style="color:var(--muted);font-size:12.5px;margin-bottom:10px;">Essa é a cor de base por trás de todas as telas.</p>
@@ -1030,6 +1070,17 @@ function attachHandlers(){
   document.querySelectorAll('[data-filter-subject]').forEach(el=>{
     el.onclick = ()=>{ subjectFilter = el.dataset.filterSubject || null; renderMain(); };
   });
+
+  // PERSONALIZAR — PERFIL ACADÊMICO
+  const saveProfileBtn = document.getElementById('save-profile-btn');
+  if(saveProfileBtn) saveProfileBtn.onclick = ()=>{
+    state.profile = {
+      faculdade: document.getElementById('profile-faculdade').value.trim(),
+      curso: document.getElementById('profile-curso').value.trim(),
+      periodo: document.getElementById('profile-periodo').value.trim()
+    };
+    saveState(); render();
+  };
 
   // PERSONALIZAR CORES
   const saveColorsBtn = document.getElementById('save-colors-btn');
